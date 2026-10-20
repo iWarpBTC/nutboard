@@ -1,0 +1,29 @@
+{
+  "name": "nutboard",
+  "version": "0.1.0",
+  "description": "Read-only statistics dashboard for a Nutshell (Cashu mint) PostgreSQL database",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "start": "node src/server.ts",
+    "dev": "node --watch src/server.ts",
+    "typecheck": "tsc --noEmit",
+    "seed:dev": "node scripts/seed-dev.ts",
+    "test": "node --test test/*.test.ts",
+    "auth:reset": "node scripts/auth-reset.ts"
+  },
+  "dependencies": {
+    "@simplewebauthn/server": "14.0.3",
+    "chart.js": "^4.4.7",
+    "pg": "^8.13.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/pg": "^8.11.10",
+    "typescript": "^5.7.2"
+  }
+}

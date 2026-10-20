@@ -1,0 +1,43 @@
+# systemd service for nutboard at https://nutboard.lnpay.cz
+# Install as root:  cp /opt/nutboard/deploy/nutboard.service /etc/systemd/system/ && systemctl daemon-reload && systemctl enable --now nutboard
+[Unit]
+Description=nutboard (nutboard.lnpay.cz)
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+User=nutboard
+Group=nutboard
+WorkingDirectory=/opt/nutboard
+ExecStart=/usr/bin/node src/server.ts
+# DATABASE_URL (the read-only mint role), MINT_TZ and MINT_NAME live in /etc/nutboard.env (root-only, see deploy/README.md)
+EnvironmentFile=/etc/nutboard.env
+Environment=ORIGIN=https://nutboard.lnpay.cz
+Environment=HOST=127.0.0.1
+Environment=PORT=26545
+Environment=AUTH_DB=/var/lib/nutboard/nutboard.db
+Environment=NODE_ENV=production
+# /var/lib/nutboard: passkeys and sessions, readable only by the nutboard user
+StateDirectory=nutboard
+StateDirectoryMode=0700
+UMask=0077
+Restart=on-failure
+RestartSec=5
+
+# The app needs nothing beyond its own state directory and the network (PostgreSQL, nginx).
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target

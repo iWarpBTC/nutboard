@@ -1,0 +1,24 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "nutboard",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "src/server.ts"
+      ],
+      "port": 3737
+    },
+    {
+      "name": "nutboard-noauth",
+      "runtimeExecutable": "env",
+      "runtimeArgs": [
+        "PORT=3738",
+        "NUTBOARD_AUTH=off",
+        "node",
+        "src/server.ts"
+      ],
+      "port": 3738
+    }
+  ]
+}

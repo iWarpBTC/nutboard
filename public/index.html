@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>nutboard</title>
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img class="logo" src="/logo-mark.png" alt="" width="40" height="40">
+      <h1 id="mint-name">nutboard</h1>
+      <span class="sub">read-only mint statistics</span>
+    </div>
+    <div class="controls">
+      <label>Unit <select id="unit-select" aria-label="Unit"></select></label>
+      <label>Charts
+        <select id="range-select" aria-label="Chart range">
+          <option value="24h">last 24 hours</option>
+          <option value="7d">last 7 days</option>
+          <option value="30d" selected>last 30 days</option>
+          <option value="90d">last 90 days</option>
+          <option value="1y">last year</option>
+          <option value="all">all time</option>
+        </select>
+      </label>
+      <label><input type="checkbox" id="auto-refresh" checked> auto-refresh</label>
+      <button id="refresh" type="button">Refresh</button>
+      <button id="theme-toggle" type="button" aria-label="Toggle dark mode" title="Toggle dark mode">◐</button>
+      <button id="signout" type="button" hidden>Sign out</button>
+    </div>
+  </header>
+  <div id="error-banner" class="error-banner" role="alert"></div>
+  <div id="status-bar" class="status-bar"></div>
+  <div id="auth-gate" class="auth-gate" hidden></div>
+
+  <main id="main">
+    <section class="hero">
+      <div class="card hero-figure" id="hero"></div>
+      <div class="tiles" id="tiles"></div>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>Activity by time window</h2>
+        <span class="hint">counts and volumes of completed operations</span>
+      </div>
+      <div class="table-wrap"><table class="window-table" id="window-table"></table></div>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>Activity over time</h2>
+        <div class="seg" id="series-mode" role="group" aria-label="Series mode">
+          <button type="button" data-mode="amount" aria-pressed="true">Amount</button>
+          <button type="button" data-mode="count" aria-pressed="false">Count</button>
+        </div>
+      </div>
+      <div id="small-multiples"></div>
+      <details class="table-view"><summary>Table view</summary><div class="table-wrap" id="timeseries-table"></div></details>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>Lightning fees by payment size</h2>
+        <span class="hint">paid melts in the chart range · LN fee = routing fee the node paid · mint fee = ecash input fees kept by the mint</span>
+      </div>
+      <div class="chart-box short"><canvas id="fees-chart"></canvas></div>
+      <div class="table-wrap"><table id="fees-table"></table></div>
+    </section>
+
+    <section class="grid-2">
+      <div class="card">
+        <div class="card-head">
+          <h2>Reserves</h2>
+          <span class="hint">Lightning backend balance vs outstanding ecash, from the mint's balance log</span>
+        </div>
+        <div class="chart-box" id="balance-chart-box"><canvas id="balance-chart"></canvas></div>
+        <details class="table-view"><summary>Table view</summary><div class="table-wrap" id="balance-table"></div></details>
+      </div>
+      <div class="card">
+        <div class="card-head">
+          <h2>Activity by hour of day</h2>
+          <span class="hint" id="hourly-hint">last 30 days, mint local time</span>
+        </div>
+        <div class="chart-box"><canvas id="hourly-chart"></canvas></div>
+        <details class="table-view"><summary>Table view</summary><div class="table-wrap" id="hourly-table"></div></details>
+      </div>
+    </section>
+
+    <section class="grid-2">
+      <div class="card">
+        <div class="card-head">
+          <h2>Outstanding notes by denomination</h2>
+          <span class="hint">signed outputs minus spent proofs, per amount</span>
+        </div>
+        <div class="chart-box"><canvas id="denom-chart"></canvas></div>
+        <details class="table-view"><summary>Table view</summary><div class="table-wrap" id="denom-table"></div></details>
+      </div>
+      <div class="card">
+        <div class="card-head">
+          <h2>Quote states</h2>
+          <span class="hint">all mint and melt quotes ever created</span>
+        </div>
+        <div class="grid-2" id="quote-states"></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>Audit checks</h2>
+        <span class="hint">internal consistency of the ledger</span>
+      </div>
+      <ul class="checks" id="checks"></ul>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>Keysets</h2>
+        <span class="hint">balance = issued − redeemed − pending, as the mint tracks it</span>
+      </div>
+      <div class="table-wrap"><table id="keysets-table"></table></div>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>Recent activity</h2>
+        <span class="hint">latest completed operations (last 30 days)</span>
+      </div>
+      <div class="table-wrap"><table id="activity-table"></table></div>
+    </section>
+
+    <section class="card" id="security">
+      <div class="card-head">
+        <h2>Security</h2>
+        <span class="hint">passkeys that can open this dashboard; no password, e-mail or reset (recovery: npm run auth:reset on the server)</span>
+      </div>
+      <div id="passkeys"><p class="muted">Loading passkeys…</p></div>
+      <div class="security-actions" id="security-actions" hidden>
+        <button type="button" data-action="add-passkey">Add passkey</button>
+        <button type="button" data-action="signout">Sign out</button>
+        <button type="button" class="danger" data-action="signout-all">Sign out everywhere</button>
+        <span class="auth-msg" id="security-msg" role="status"></span>
+      </div>
+    </section>
+  </main>
+  <footer id="footer"></footer>
+
+  <script src="/vendor/chart.umd.js"></script>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
