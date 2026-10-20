@@ -712,7 +712,7 @@ function renderChecks() {
       (c) => `<li class="check ${c.status}"><span class="icon" aria-hidden="true">${ICON[c.status]}</span><div>
         <div class="title">${esc(c.title)} <span class="badge">${LABEL[c.status]}</span></div>
         <div class="summary">${esc(c.summary)}</div>
-        ${c.records?.length ? `<details open><summary class="muted">${c.records.length} record${c.records.length === 1 ? "" : "s"}${c.truncated ? " (first " + c.records.length + ")" : ""}</summary>${recordsTable(c.records)}</details>` : ""}
+        ${c.records?.length ? `<details${c.status === "warn" || c.status === "fail" ? " open" : ""}><summary class="muted">${c.records.length} record${c.records.length === 1 ? "" : "s"}${c.truncated ? " (first " + c.records.length + ")" : ""}</summary>${recordsTable(c.records)}</details>` : ""}
         ${c.remedy ? `<details><summary class="muted">what this means and how to address it</summary><p class="remedy">${esc(c.remedy)}</p></details>` : ""}
         ${c.details ? `<details><summary class="muted">details</summary><pre>${esc(JSON.stringify(c.details, null, 2))}</pre></details>` : ""}
       </div></li>`,
