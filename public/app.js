@@ -253,8 +253,8 @@ function renderStatus() {
   const pills = [];
   pills.push(`<span class="pill ${h.readOnly ? "ok" : "fail"}"><span class="dot"></span>${h.readOnly ? "session read-only" : "SESSION NOT READ-ONLY"}</span>`);
   pills.push(`<span class="pill ${h.connection.roleCanWrite || h.connection.superuser ? "warn" : "ok"}"><span class="dot"></span>role ${esc(h.connection.user)}${h.connection.superuser ? " (superuser!)" : h.connection.roleCanWrite ? " (has write privileges)" : " (select-only)"}</span>`);
-  pills.push(`<span class="pill"><span class="dot"></span>${esc(h.connection.database)} · PostgreSQL ${esc(h.connection.serverVersion)}</span>`);
-  pills.push(`<span class="pill"><span class="dot"></span>Nutshell db v${h.nutshellDbVersion ?? "?"}</span>`);
+  pills.push(`<span class="pill detail"><span class="dot"></span>${esc(h.connection.database)} · PostgreSQL ${esc(h.connection.serverVersion)}</span>`);
+  pills.push(`<span class="pill detail"><span class="dot"></span>Nutshell db v${h.nutshellDbVersion ?? "?"}</span>`);
     const tz = h.timeZone;
     pills.push(
       `<span class="pill ${tz?.hint ? "warn" : ""}" title="${esc(tz?.hint || (tz?.newestRow ? `newest ledger row ${tz.newestRow} mint local time` : ""))}"><span class="dot"></span>mint time zone ${esc(h.mintTz)}${
@@ -262,7 +262,7 @@ function renderStatus() {
       }</span>`,
     );
     if (tz?.hint) pills.push(`<span class="pill warn"><span class="dot"></span>${esc(tz.hint)}</span>`);
-  pills.push(`<span class="pill"><span class="dot"></span>db ${h.dbLatencyMs} ms · cache ${h.cacheTtlSeconds}s</span>`);
+  pills.push(`<span class="pill detail"><span class="dot"></span>db ${h.dbLatencyMs} ms · cache ${h.cacheTtlSeconds}s</span>`);
   bar.innerHTML = pills.join("");
 }
 

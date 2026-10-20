@@ -1,6 +1,6 @@
 {
   "name": "nutboard",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Read-only statistics dashboard for a Nutshell (Cashu mint) PostgreSQL database",
   "private": true,
   "type": "module",

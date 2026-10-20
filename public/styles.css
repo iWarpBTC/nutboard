@@ -101,6 +101,7 @@ button[aria-pressed="true"] { background: var(--wash); border-color: var(--axis)
 .brand .sub { color: var(--muted); font-size: 0.85rem; }
 .controls { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; }
 .controls label { display: inline-flex; align-items: center; gap: 6px; color: var(--text-2); font-size: 0.9rem; }
+.lbl-short { display: none; }
 
 .status-bar {
   display: flex;
@@ -254,3 +255,62 @@ button.danger { color: var(--status-critical); }
 .public-fees { max-width: 560px; margin: 14px auto 0; padding: 12px 16px; font-size: 0.85rem; color: var(--text-2); text-align: center; }
 .public-fees .label { font-weight: 500; color: var(--text); margin-bottom: 4px; }
 .public-fees .line { line-height: 1.5; }
+
+/* phones: the same content, less chrome. Nothing here applies above 640px. */
+@media (max-width: 640px) {
+  html { font-size: 14px; }
+  .topbar { padding: 8px 12px; gap: 6px 10px; }
+  .brand { gap: 8px; min-width: 0; }
+  .brand .logo { width: 28px; height: 28px; }
+  .brand h1 { font-size: 1rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 60vw; }
+  .brand .sub { display: none; }
+  .controls { gap: 6px 8px; }
+  .controls label { font-size: 0.82rem; gap: 4px; }
+  .lbl { display: none; }
+  .lbl-long { display: none; }
+  .lbl-short { display: inline; }
+  button, select { padding: 4px 8px; font-size: 0.85rem; border-radius: 7px; }
+  .status-bar { padding: 6px 12px; gap: 4px 6px; font-size: 0.74rem; }
+  .pill { padding: 1px 7px; gap: 5px; }
+  .pill.detail { display: none; }
+  main { padding: 10px 10px 32px; gap: 10px; }
+  .grid-2 { grid-template-columns: 1fr; gap: 10px; }
+  .card { padding: 12px 12px; border-radius: 8px; }
+  .card-head { margin-bottom: 6px; gap: 4px 8px; }
+  .card-head .hint { font-size: 0.74rem; }
+  h2 { font-size: 0.95rem; }
+  .hero { gap: 10px; }
+  .hero-figure .value { font-size: 2.1rem; }
+  .hero-figure .value .unit { font-size: 1rem; }
+  .hero-figure .sub, .tile .sub { font-size: 0.74rem; }
+  .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .tile { padding: 9px 10px; }
+  .tile .label { font-size: 0.72rem; }
+  .tile .value { font-size: 1.05rem; margin-top: 2px; }
+  table { font-size: 0.8rem; }
+  th, td { padding: 5px 6px; }
+  th { font-size: 0.68rem; }
+  .cell-sub { font-size: 0.68rem; }
+  .window-table td:first-child { min-width: 96px; }
+  .window-table .row-label .cell-sub { display: none; }
+  .chart-box { height: 210px; }
+  .chart-box.short { height: 170px; margin-bottom: 8px; }
+  .sm-row { grid-template-columns: 1fr; gap: 4px; padding: 6px 0; }
+  .sm-meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+  .sm-meta .total { font-size: 0.95rem; margin: 0; }
+  .sm-meta .sub { font-size: 0.72rem; }
+  .sm-chart { height: 88px; }
+  details.table-view summary { font-size: 0.76rem; }
+  .check { grid-template-columns: 22px 1fr; gap: 8px; padding: 6px 8px; }
+  .check .title { font-size: 0.9rem; }
+  .check .summary { font-size: 0.8rem; }
+  .check .table-wrap { font-size: 0.76rem; }
+  .check .remedy { font-size: 0.78rem; }
+  .passkey { gap: 8px; padding: 6px 8px; }
+  .security-actions { gap: 6px; }
+  .auth-gate { padding: 24px 12px; }
+  .auth-card { padding: 22px 16px; gap: 10px; }
+  .auth-icon img { width: 110px; height: 110px; }
+  .public-fees { margin-top: 10px; padding: 10px 12px; font-size: 0.8rem; }
+  footer { padding: 0 12px 28px; font-size: 0.72rem; }
+}

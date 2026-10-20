@@ -23,8 +23,8 @@
       <span class="sub">read-only mint statistics</span>
     </div>
     <div class="controls">
-      <label>Unit <select id="unit-select" aria-label="Unit"></select></label>
-      <label>Charts
+      <label><span class="lbl">Unit</span> <select id="unit-select" aria-label="Unit"></select></label>
+      <label><span class="lbl">Charts</span>
         <select id="range-select" aria-label="Chart range">
           <option value="24h">last 24 hours</option>
           <option value="7d">last 7 days</option>
@@ -34,7 +34,7 @@
           <option value="all">all time</option>
         </select>
       </label>
-      <label><input type="checkbox" id="auto-refresh" checked> auto-refresh</label>
+      <label><input type="checkbox" id="auto-refresh" checked> <span class="lbl-long">auto-refresh</span><span class="lbl-short">auto</span></label>
       <button id="refresh" type="button">Refresh</button>
       <button id="theme-toggle" type="button" aria-label="Toggle dark mode" title="Toggle dark mode">◐</button>
       <button id="signout" type="button" hidden>Sign out</button>
