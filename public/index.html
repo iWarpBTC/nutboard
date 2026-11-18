@@ -24,7 +24,7 @@
     </div>
     <div class="controls">
       <label><span class="lbl">Unit</span> <select id="unit-select" aria-label="Unit"></select></label>
-      <label><span class="lbl">Charts</span>
+      <label id="range-control"><span class="lbl">Charts</span>
         <select id="range-select" aria-label="Chart range">
           <option value="24h">last 24 hours</option>
           <option value="7d">last 7 days</option>
@@ -40,11 +40,99 @@
       <button id="signout" type="button" hidden>Sign out</button>
     </div>
   </header>
+  <nav id="views" class="views" aria-label="What to show" hidden></nav>
   <div id="error-banner" class="error-banner" role="alert"></div>
   <div id="status-bar" class="status-bar"></div>
   <div id="auth-gate" class="auth-gate" hidden></div>
 
   <main id="main">
+    <!-- everything at a glance: each mint, LNbits, and what the Lightning node has to cover in total -->
+    <div id="view-all" class="view" hidden>
+      <section class="hero">
+        <div class="card hero-figure" id="all-hero"></div>
+        <div class="tiles" id="all-tiles"></div>
+      </section>
+      <section class="card">
+        <div class="card-head">
+          <h2>Sources side by side</h2>
+          <span class="hint">completed operations per source; click a row to open it</span>
+        </div>
+        <div class="table-wrap"><table class="window-table" id="all-table"></table></div>
+      </section>
+    </div>
+
+    <!-- LNbits: balances and payments per wallet -->
+    <div id="view-lnbits" class="view" hidden>
+      <section class="hero">
+        <div class="card hero-figure" id="ln-hero"></div>
+        <div class="tiles" id="ln-tiles"></div>
+      </section>
+      <section class="card">
+        <div class="card-head">
+          <h2>Payments by time window</h2>
+          <span class="hint">settled payments; transfers between wallets of this LNbits never touch Lightning</span>
+        </div>
+        <div class="table-wrap"><table class="window-table" id="ln-window-table"></table></div>
+      </section>
+      <section class="card">
+        <div class="card-head">
+          <h2>Payments over time</h2>
+          <span class="hint">received and sent over Lightning, in the chart range</span>
+        </div>
+        <div class="chart-box"><canvas id="ln-chart"></canvas></div>
+      </section>
+      <section class="card">
+        <div class="card-head">
+          <h2>Wallets</h2>
+          <label class="hint"><input type="checkbox" id="ln-show-all"> show empty and deleted wallets</label>
+        </div>
+        <div class="table-wrap"><table id="ln-wallets"></table></div>
+      </section>
+      <section class="card">
+        <div class="card-head">
+          <h2>Recent payments</h2>
+          <span class="hint" id="ln-payments-hint">newest first</span>
+        </div>
+        <div class="table-wrap"><table id="ln-payments"></table></div>
+      </section>
+    </div>
+
+    <!-- the kill switch -->
+    <div id="view-control" class="view" hidden>
+      <section class="card">
+        <div class="card-head">
+          <h2>Services</h2>
+          <span class="hint">what systemd says about the units the kill switch acts on</span>
+        </div>
+        <div id="kill-problems"></div>
+        <div class="table-wrap"><table id="kill-units"></table></div>
+      </section>
+      <section class="card danger-zone">
+        <div class="card-head">
+          <h2>Kill switch</h2>
+          <span class="hint">stops and disables services on this server; they stay down, across reboots too, until started again by hand</span>
+        </div>
+        <div id="kill-targets"></div>
+        <p class="auth-msg" id="kill-msg" role="status"></p>
+        <details class="table-view"><summary>How to start things again</summary>
+          <p class="remedy">The kill switch only works one way. To bring a service back, sign in to the server as root and run, for each unit listed above:
+
+systemctl enable --now &lt;unit&gt;
+
+Start the tunnel to the Lightning node first, then the mints and LNbits, and look at their logs before letting traffic back in.</p>
+        </details>
+      </section>
+      <section class="card">
+        <div class="card-head">
+          <h2>Kill switch log</h2>
+          <span class="hint">requests made from this dashboard</span>
+        </div>
+        <div class="table-wrap"><table id="kill-log"></table></div>
+      </section>
+    </div>
+
+    <!-- one mint in detail -->
+    <div id="view-mint" class="view">
     <section class="hero">
       <div class="card hero-figure" id="hero"></div>
       <div class="tiles" id="tiles"></div>
@@ -139,6 +227,7 @@
       </div>
       <div class="table-wrap"><table id="activity-table"></table></div>
     </section>
+    </div>
 
     <section class="card" id="security">
       <div class="card-head">

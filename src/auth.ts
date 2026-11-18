@@ -281,6 +281,18 @@ export function createAuth(db: DatabaseSync, { origin, setupCode = null, rpName 
     return s;
   }
 
+  /**
+   * A session opened with the passkey no longer than maxAgeMs ago. Used for the few things that change
+   * something: an old or stolen cookie is not enough, the passkey has to be used again.
+   */
+  function requireFreshSession(req: AuthRequest, maxAgeMs: number): SessionRow {
+    const s = requireSession(req);
+    if (now() - s.created_at > maxAgeMs) {
+      throw new AuthError(401, "reauth_required", "Confirm with your passkey to continue");
+    }
+    return s;
+  }
+
   function logout(req: AuthRequest, res: AuthResponse): void {
     const token = parseCookies(req.headers.cookie)[cookieName];
     if (token) q.deleteSession.run(sha256(token).toString("hex"));
@@ -439,6 +451,7 @@ export function createAuth(db: DatabaseSync, { origin, setupCode = null, rpName 
     status,
     session,
     requireSession,
+    requireFreshSession,
     logout,
     logoutEverywhere,
     listPasskeys,

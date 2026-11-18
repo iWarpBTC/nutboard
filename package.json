@@ -1,7 +1,7 @@
 {
   "name": "nutboard",
-  "version": "0.1.1",
-  "description": "Read-only statistics dashboard for a Nutshell (Cashu mint) PostgreSQL database",
+  "version": "0.2.0",
+  "description": "Read-only statistics dashboard for Cashu mints (Nutshell or CDK) and LNbits on PostgreSQL",
   "private": true,
   "type": "module",
   "license": "MIT",
@@ -13,6 +13,8 @@
     "dev": "node --watch src/server.ts",
     "typecheck": "tsc --noEmit",
     "seed:dev": "node scripts/seed-dev.ts",
+    "seed:dev:cdk": "node scripts/seed-dev-cdk.ts",
+    "seed:dev:lnbits": "node scripts/seed-dev-lnbits.ts",
     "test": "node --test test/*.test.ts",
     "auth:reset": "node scripts/auth-reset.ts"
   },

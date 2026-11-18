@@ -1,0 +1,45 @@
+# systemd template for running one nutboard per mint on the same server, all from the code in /opt/nutboard.
+# "nutboard@cdk" reads /etc/nutboard/cdk.env and keeps its passkeys in /var/lib/nutboard-cdk.
+# Install as root:  cp "/opt/nutboard/deploy/nutboard@.service" /etc/systemd/system/ && systemctl daemon-reload
+# Start one:        systemctl enable --now nutboard@cdk        (see deploy/README.md, "A second mint on the same server")
+[Unit]
+Description=nutboard (%i)
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+User=nutboard
+Group=nutboard
+WorkingDirectory=/opt/nutboard
+ExecStart=/usr/bin/node src/server.ts
+# DATABASE_URL (the read-only role), ORIGIN, PORT, MINT_NAME and MINT_TZ of this instance; root-only file
+EnvironmentFile=/etc/nutboard/%i.env
+Environment=HOST=127.0.0.1
+Environment=AUTH_DB=/var/lib/nutboard-%i/nutboard.db
+Environment=NODE_ENV=production
+# /var/lib/nutboard-<instance>: passkeys and sessions, readable only by the nutboard user
+StateDirectory=nutboard-%i
+StateDirectoryMode=0700
+UMask=0077
+# The kill switch (optional, see deploy/README.md): the only place outside its state directory nutboard may write.
+ReadWritePaths=-/run/nutboard-kill
+Restart=on-failure
+RestartSec=5
+
+# The app needs nothing beyond its own state directory and the network (PostgreSQL, nginx).
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target

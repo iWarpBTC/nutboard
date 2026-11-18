@@ -314,3 +314,30 @@ button.danger { color: var(--status-critical); }
   .public-fees { margin-top: 10px; padding: 10px 12px; font-size: 0.8rem; }
   footer { padding: 0 12px 28px; font-size: 0.72rem; }
 }
+
+/* ---------- views: all sources, one mint, LNbits, control ---------- */
+.views { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 24px 0; max-width: 1280px; margin: 0 auto; }
+.views button { padding: 5px 12px; font-size: 0.9rem; }
+.views button .badge { margin-left: 6px; }
+.views button.control { margin-left: auto; }
+.view { display: grid; gap: 18px; }
+.view[hidden] { display: none; }
+tr.clickable { cursor: pointer; }
+tr.clickable:hover td { background: var(--wash); }
+tr.selected td { background: var(--wash); }
+button.rename { padding: 0 6px; font-size: 0.8rem; border-color: transparent; background: transparent; color: var(--muted); }
+button.rename:hover { color: var(--text); border-color: var(--border); }
+.amount-in { color: var(--good-text); }
+.amount-out { color: var(--text); }
+.source-error { color: var(--status-critical); font-size: 0.85rem; }
+
+/* ---------- kill switch ---------- */
+.danger-zone { border-color: var(--status-critical); }
+.kill-target { display: flex; gap: 14px; align-items: flex-start; justify-content: space-between; padding: 12px 0; border-top: 1px solid var(--border); }
+.kill-target:first-child { border-top: 0; }
+.kill-target .what { flex: 1; min-width: 0; }
+.kill-target .what p { margin: 2px 0 0; color: var(--text-2); font-size: 0.85rem; }
+.kill-target button { white-space: nowrap; border-color: var(--status-critical); color: var(--status-critical); }
+.kill-target.catastrophic button { background: var(--status-critical); color: #fff; }
+.kill-problem { border: 1px solid var(--status-warn); border-radius: 8px; padding: 8px 12px; margin-bottom: 10px; font-size: 0.9rem; }
+@media (max-width: 640px) { .kill-target { flex-direction: column; } .views { padding: 8px 12px 0; } }

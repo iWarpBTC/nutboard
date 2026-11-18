@@ -1,14 +1,15 @@
 import pg from "pg";
-import type { Config } from "./config.ts";
+import type { SourceConfig } from "./config.ts";
 
 const { Pool, types } = pg;
 
-// Nutshell stores amounts as BIGINT and SUM()/AVG() produce NUMERIC. node-postgres returns
+// Mints store amounts as BIGINT or INTEGER and SUM()/AVG() produce BIGINT or NUMERIC. node-postgres returns
 // both as strings; satoshi/cent amounts are far below 2^53, so plain numbers are safe.
 types.setTypeParser(20, (v) => Number(v));
 types.setTypeParser(1700, (v) => Number(v));
 
-export const TABLES = [
+/** Tables of a Nutshell mint (cashu/mint/migrations.py). */
+export const NUTSHELL_TABLES = [
   "keysets",
   "promises",
   "proofs_used",
@@ -18,14 +19,37 @@ export const TABLES = [
   "balance_log",
   "dbversions",
 ] as const;
+/** Tables of a CDK mint (cdk-sql-common/src/mint/migrations) that nutboard reads. */
+export const CDK_TABLES = [
+  "keyset",
+  "keyset_amounts",
+  "blind_signature",
+  "proof",
+  "mint_quote",
+  "mint_quote_payments",
+  "mint_quote_issued",
+  "melt_quote",
+  "melt_request",
+  "completed_operations",
+  "saga_state",
+  "migrations",
+] as const;
+export const TABLES = [...NUTSHELL_TABLES, ...CDK_TABLES] as const;
 export type TableName = (typeof TABLES)[number];
+
+/** Which mint software wrote the database. */
+export type MintKind = "nutshell" | "cdk";
 
 export interface SchemaInfo {
   schema: string;
   /** table name -> set of column names visible to the connected role */
   columns: Map<string, Set<string>>;
-  /** Nutshell migration version from the dbversions table, if readable */
+  /** which mint software the tables belong to */
+  kind: MintKind;
+  /** Nutshell migration version from the dbversions table, if readable (null for CDK) */
   dbVersion: number | null;
+  /** schema level for display: "42" for Nutshell, the newest applied migration for CDK */
+  schemaVersion: string | null;
 }
 
 export interface ConnectionInfo {
@@ -52,11 +76,11 @@ function assertIdentifier(name: string, what: string): string {
 
 export class Db {
   readonly pool: pg.Pool;
-  readonly config: Config;
+  readonly config: SourceConfig;
   schema: SchemaInfo | null = null;
   info: ConnectionInfo | null = null;
 
-  constructor(config: Config) {
+  constructor(config: SourceConfig) {
     this.config = config;
     const schema = assertIdentifier(config.pgSchema, "PG_SCHEMA");
     // Startup parameters sent with the connection: every session is read-only before the first
@@ -147,13 +171,13 @@ export class Db {
     return info;
   }
 
-  /** Reads which Nutshell tables/columns exist, so queries can adapt to the mint's migration level. */
-  async introspect(): Promise<SchemaInfo> {
+  /** Which of the given tables the connected role can read, and which of their columns. */
+  async readableColumns(tables: readonly string[]): Promise<Map<string, Set<string>>> {
     const rows = await this.query<{ table_name: string; column_name: string }>(
       `SELECT table_name, column_name
          FROM information_schema.columns
         WHERE table_schema = $1 AND table_name = ANY($2::text[])`,
-      [this.config.pgSchema, [...TABLES]],
+      [this.config.pgSchema, [...tables]],
     );
     const columns = new Map<string, Set<string>>();
     for (const r of rows) {
@@ -164,18 +188,39 @@ export class Db {
       }
       set.add(r.column_name);
     }
+    return columns;
+  }
+
+  /** Reads which mint tables/columns exist: that decides the dialect and lets queries adapt to the schema level. */
+  async introspect(): Promise<SchemaInfo> {
+    const columns = await this.readableColumns(TABLES);
+    const kind = detectKind(columns, this.config.mintKind, this.config.pgSchema);
     let dbVersion: number | null = null;
-    if (columns.has("dbversions")) {
+    let schemaVersion: string | null = null;
+    if (kind === "nutshell" && columns.has("dbversions")) {
       try {
         const v = await this.query<{ db: string; version: number }>(
           `SELECT db, version FROM dbversions ORDER BY (db = 'mint') DESC, version DESC LIMIT 1`,
         );
         dbVersion = v[0]?.version ?? null;
+        schemaVersion = dbVersion === null ? null : String(dbVersion);
       } catch (err) {
         console.warn("could not read dbversions:", (err as Error).message);
       }
     }
-    this.schema = { schema: this.config.pgSchema, columns, dbVersion };
+    if (kind === "cdk" && columns.has("migrations")) {
+      try {
+        // CDK names its migrations by timestamp (after two numbered ones), so the greatest timestamped name is the newest.
+        const v = await this.query<{ newest: string | null }>(
+          `WITH m AS (SELECT substring(name from '[^/]*$') AS file FROM migrations)
+           SELECT coalesce(max(file) FILTER (WHERE file ~ '^[0-9]{14}_'), max(file)) AS newest FROM m`,
+        );
+        schemaVersion = v[0]?.newest?.replace(/\.sql$/, "") ?? null;
+      } catch (err) {
+        console.warn("could not read migrations:", (err as Error).message);
+      }
+    }
+    this.schema = { schema: this.config.pgSchema, columns, kind, dbVersion, schemaVersion };
     return this.schema;
   }
 
@@ -197,4 +242,25 @@ export function hasColumn(schema: SchemaInfo, table: TableName, column: string):
 
 export function hasTable(schema: SchemaInfo, table: TableName): boolean {
   return schema.columns.has(table);
+}
+
+/** Tells a Nutshell database from a CDK one by the tables the connected role can see. */
+function detectKind(columns: Map<string, Set<string>>, wanted: "auto" | MintKind, schema: string): MintKind {
+  const nutshell = columns.has("keysets") && columns.has("promises");
+  const cdk = columns.has("keyset") && columns.has("blind_signature") && columns.has("proof");
+  if (wanted !== "auto") {
+    if (wanted === "nutshell" ? !nutshell : !cdk) {
+      throw new Error(`MINT_KIND=${wanted}, but schema "${schema}" does not hold the tables of a ${wanted} mint`);
+    }
+    return wanted;
+  }
+  if (nutshell && cdk) {
+    throw new Error(`schema "${schema}" holds both Nutshell and CDK mint tables; set MINT_KIND=nutshell or MINT_KIND=cdk`);
+  }
+  if (nutshell) return "nutshell";
+  if (cdk) return "cdk";
+  throw new Error(
+    `no mint tables visible in schema "${schema}": expected Nutshell (keysets, promises) or CDK (keyset, blind_signature, proof). ` +
+      "Check DATABASE_URL, PG_SCHEMA and the grants of the role (scripts/create-readonly-role.sql).",
+  );
 }

@@ -1,0 +1,12 @@
+# /etc/nutboard/killswitch.conf: the systemd units the kill switch stops and disables.
+# Root-owned, world-readable (no secrets): nutboard reads it to show whether the units run,
+# /usr/local/sbin/nutboard-kill sources it to know what to stop. Unit names separated by spaces.
+
+# "Stop the mints"
+MINT_UNITS="cashu-mint.service cdk-mintd.service"
+
+# "Stop LNbits"
+LNBITS_UNITS="lnbits.service"
+
+# "Cut the link to the Lightning node": taken down first, then the two groups above
+LND_LINK_UNITS="wg-quick@wg0.service"

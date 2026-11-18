@@ -7,6 +7,11 @@ const $$ = (sel) => [...document.querySelectorAll(sel)];
 const state = {
   auth: null,
   locked: false,
+  view: null, // "all" | "mint" | "lnbits" | "control"; chosen once the server says what there is to show
+  mint: null, // id of the mint the mint view shows
+  labels: { wallet: {}, account: {} }, // names given to LNbits wallets and accounts
+  lnWallet: null, // LNbits wallet whose payments are listed; null lists all
+  lnShowAll: false,
   unit: null,
   range: "30d",
   seriesMode: "amount",
@@ -69,6 +74,19 @@ function esc(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 }
 const KIND_LABEL = { mint: "Minted", melt: "Melted", swap: "Swapped" };
+
+// What the connected mint offers (MintStats.features on the server); a Nutshell mint is assumed until health arrives.
+const FEATURE_DEFAULTS = { balanceLog: true, exactSwaps: false, localTimestamps: true };
+const feature = (name) => state.data.health?.features?.[name] ?? FEATURE_DEFAULTS[name];
+const isCdk = () => state.data.health?.mintKind === "cdk";
+/** Marks swap counts that are estimated rather than recorded by the mint. */
+const approx = () => (feature("exactSwaps") ? "" : " ≈");
+/** "20260811000000_add_x" -> "2026-08-11"; anything else is shown as it is. */
+function schemaLabel(v) {
+  if (!v) return "?";
+  const m = /^(\d{4})(\d{2})(\d{2})\d{6}_/.exec(v);
+  return m ? `${m[1]}-${m[2]}-${m[3]}` : v;
+}
 
 // ---------- theme & chart chrome ----------
 const cssVar = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -197,24 +215,16 @@ async function loadAll() {
   const main = $("#main");
   main.classList.add("loading");
   try {
-    const health = await fetchJson("/api/health");
+    const health = await fetchJson("/api/health", { mint: state.mint });
     state.data.health = health;
-    const units = await fetchJson("/api/units");
-    state.units = units;
-    if (!state.unit || !units.includes(state.unit)) state.unit = units.includes("sat") ? "sat" : units[0];
-    const unit = state.unit;
-    const [overview, timeseries, fees, keysets, denominations, balanceLog, hourly, activity, audit] = await Promise.all([
-      fetchJson("/api/overview", { unit }),
-      fetchJson("/api/timeseries", { unit, range: state.range }),
-      fetchJson("/api/fees", { unit, range: state.range }),
-      fetchJson("/api/keysets"),
-      fetchJson("/api/denominations", { unit }),
-      fetchJson("/api/balance-log", { unit, range: state.range === "24h" || state.range === "7d" ? "30d" : state.range }),
-      fetchJson("/api/hourly", { unit }),
-      fetchJson("/api/activity", { unit, limit: 40 }),
-      fetchJson("/api/audit", { unit }),
-    ]);
-    Object.assign(state.data, { overview, timeseries, keysets, denominations, balanceLog, hourly, activity, audit, fees });
+    state.mint = health.mint;
+    const several = health.mints.length > 1 || !!health.lnbits;
+    if (!state.view) state.view = several ? "all" : "mint";
+    if ((state.view === "lnbits" && !health.lnbits) || (state.view === "control" && !health.killSwitch)) state.view = several ? "all" : "mint";
+    if (state.view === "mint") await loadMint();
+    else if (state.view === "lnbits") await loadLnbits();
+    else if (state.view === "control") await loadControl();
+    else await loadSummary();
     showError("");
     renderAll();
     loadPasskeys();
@@ -225,10 +235,65 @@ async function loadAll() {
   }
 }
 
+/** Everything the detailed view of one mint shows. */
+async function loadMint() {
+  const mint = state.mint;
+  const units = await fetchJson("/api/units", { mint });
+  state.units = units;
+  if (!state.unit || !units.includes(state.unit)) state.unit = units.includes("sat") ? "sat" : units[0];
+  const unit = state.unit;
+  const [overview, timeseries, fees, keysets, denominations, balanceLog, hourly, activity, audit] = await Promise.all([
+    fetchJson("/api/overview", { mint, unit }),
+    fetchJson("/api/timeseries", { mint, unit, range: state.range }),
+    fetchJson("/api/fees", { mint, unit, range: state.range }),
+    fetchJson("/api/keysets", { mint }),
+    fetchJson("/api/denominations", { mint, unit }),
+    fetchJson("/api/balance-log", { mint, unit, range: state.range === "24h" || state.range === "7d" ? "30d" : state.range }),
+    fetchJson("/api/hourly", { mint, unit }),
+    fetchJson("/api/activity", { mint, unit, limit: 40 }),
+    fetchJson("/api/audit", { mint, unit }),
+  ]);
+  Object.assign(state.data, { overview, timeseries, keysets, denominations, balanceLog, hourly, activity, audit, fees });
+}
+
+async function loadSummary() {
+  const [summary, kill] = await Promise.all([
+    fetchJson("/api/summary"),
+    state.data.health.killSwitch ? fetchJson("/api/kill") : Promise.resolve(null),
+  ]);
+  Object.assign(state.data, { summary, kill });
+}
+
+async function loadLnbits() {
+  const [overview, wallets, payments, series, labels] = await Promise.all([
+    fetchJson("/api/lnbits/overview"),
+    fetchJson("/api/lnbits/wallets"),
+    fetchJson("/api/lnbits/payments", { limit: 60, wallet: state.lnWallet }),
+    fetchJson("/api/lnbits/timeseries", { range: state.range }),
+    fetchJson("/api/labels"),
+  ]);
+  state.labels = labels;
+  state.data.ln = { overview, wallets, payments, series };
+}
+
+async function loadControl() {
+  state.data.kill = await fetchJson("/api/kill");
+}
+
 // ---------- rendering ----------
 function renderAll() {
-  if (!state.data.overview) return;
+  if (!state.data.health) return;
   applyChartDefaults();
+  renderChrome();
+  if (state.view === "lnbits") renderLnbits();
+  else if (state.view === "control") renderControl();
+  else if (state.view === "all") renderSummary();
+  else renderMint();
+  renderFooter();
+}
+
+function renderMint() {
+  if (!state.data.overview) return;
   renderStatus();
   renderUnitSelect();
   renderHero();
@@ -242,26 +307,31 @@ function renderAll() {
   renderChecks();
   renderKeysets();
   renderActivity();
-  renderFooter();
 }
 
 function renderStatus() {
   const h = state.data.health;
   const bar = $("#status-bar");
-  $("#mint-name").textContent = h.mintName || "nutboard";
-  document.title = `${h.mintName || "nutboard"} · nutboard`;
   const pills = [];
   pills.push(`<span class="pill ${h.readOnly ? "ok" : "fail"}"><span class="dot"></span>${h.readOnly ? "session read-only" : "SESSION NOT READ-ONLY"}</span>`);
   pills.push(`<span class="pill ${h.connection.roleCanWrite || h.connection.superuser ? "warn" : "ok"}"><span class="dot"></span>role ${esc(h.connection.user)}${h.connection.superuser ? " (superuser!)" : h.connection.roleCanWrite ? " (has write privileges)" : " (select-only)"}</span>`);
   pills.push(`<span class="pill detail"><span class="dot"></span>${esc(h.connection.database)} · PostgreSQL ${esc(h.connection.serverVersion)}</span>`);
-  pills.push(`<span class="pill detail"><span class="dot"></span>Nutshell db v${h.nutshellDbVersion ?? "?"}</span>`);
-    const tz = h.timeZone;
+  pills.push(
+    isCdk()
+      ? `<span class="pill detail" title="newest applied migration: ${esc(h.schemaVersion ?? "unknown")}"><span class="dot"></span>CDK schema ${esc(schemaLabel(h.schemaVersion))}</span>`
+      : `<span class="pill detail"><span class="dot"></span>Nutshell db v${h.nutshellDbVersion ?? "?"}</span>`,
+  );
+  const tz = h.timeZone;
+  if (!feature("localTimestamps")) {
+    pills.push(`<span class="pill detail" title="the mint stores Unix time; this zone only decides the hour of day"><span class="dot"></span>hours of day in ${esc(h.mintTz)}</span>`);
+  } else {
     pills.push(
       `<span class="pill ${tz?.hint ? "warn" : ""}" title="${esc(tz?.hint || (tz?.newestRow ? `newest ledger row ${tz.newestRow} mint local time` : ""))}"><span class="dot"></span>mint time zone ${esc(h.mintTz)}${
         tz?.newestRow ? ` · newest row ${esc(fmtAgo(new Date(Date.now() - (tz.ageConfiguredSeconds ?? 0) * 1000)))}` : ""
       }</span>`,
     );
     if (tz?.hint) pills.push(`<span class="pill warn"><span class="dot"></span>${esc(tz.hint)}</span>`);
+  }
   pills.push(`<span class="pill detail"><span class="dot"></span>db ${h.dbLatencyMs} ms · cache ${h.cacheTtlSeconds}s</span>`);
   bar.innerHTML = pills.join("");
 }
@@ -302,13 +372,13 @@ function renderHero() {
   tiles.push(tile("Issued (all time)", esc(fmtAmount(L.issued, unit, { compact: true })), `${esc(fmtInt(L.issuedCount))} blind signatures`));
   tiles.push(tile("Redeemed (all time)", esc(fmtAmount(L.redeemed, unit, { compact: true })), `${esc(fmtInt(L.redeemedCount))} proofs spent`));
   tiles.push(tile("Pending proofs", esc(fmtAmount(L.pending, unit, { compact: true })), `${esc(fmtInt(L.pendingCount))} proofs in flight`));
-  tiles.push(tile("Input fees collected", L.feesPaid === null ? "–" : esc(fmtAmount(L.feesPaid, unit, { compact: true })), "keysets.fees_paid"));
+  tiles.push(tile("Input fees collected", L.feesPaid === null ? "–" : esc(fmtAmount(L.feesPaid, unit, { compact: true })), isCdk() ? "keyset_amounts.fee_collected" : "keysets.fees_paid"));
   tiles.push(tile("Lightning fees paid", esc(fmtAmount(o.melt.all.fee_paid, unit, { compact: true })), `of ${esc(fmtAmount(o.melt.all.fee_reserve, unit, { compact: true }))} reserved`));
   if (o.lastBalanceLog) {
     const b = o.lastBalanceLog;
     const reserve = b.backendBalance - b.keysetBalance;
     tiles.push(tile("Backend reserve", esc(fmtAmount(reserve, unit, { compact: true })), `backend ${esc(fmtAmount(b.backendBalance, unit, { compact: true }))} · logged ${esc(fmtAgo(b.time))}`, reserve < 0 ? "bad" : ""));
-  } else {
+  } else if (feature("balanceLog")) {
     tiles.push(tile("Backend reserve", "–", "no balance_log entries"));
   }
   tiles.push(tile("Unsigned outputs", esc(fmtInt(L.unsignedPromises)), "stored blinded messages without a signature"));
@@ -324,9 +394,9 @@ function renderWindowTable() {
   const row = (swatch, label, hint, cells) =>
     `<tr><td><div class="row-label"><span class="swatch ${swatch}"></span><div>${label}<span class="cell-sub">${hint}</span></div></div></td>${cells}</tr>`;
   const rows = [];
-  rows.push(row("mint", "Minted", "Lightning paid in, ecash issued", W.map((w) => cell(o.mint[w.key].amount, o.mint[w.key].count, "quotes")).join("")));
-  rows.push(row("melt", "Melted", "ecash redeemed, Lightning paid out", W.map((w) => cell(o.melt[w.key].amount, o.melt[w.key].count, "quotes")).join("")));
-  rows.push(row("swap", "Swapped", "ecash exchanged for new ecash (≈ operations)", W.map((w) => cell(o.signatures[w.key].swap_amount, o.signatures[w.key].swap_ops, "swaps ≈")).join("")));
+  rows.push(row("mint", "Minted", "Lightning paid in, ecash issued", W.map((w) => cell(o.mint[w.key].amount, o.mint[w.key].count, isCdk() ? "mints" : "quotes")).join("")));
+  rows.push(row("melt", "Melted", "ecash redeemed, Lightning paid out", W.map((w) => cell(o.melt[w.key].amount, o.melt[w.key].count, isCdk() ? "melts" : "quotes")).join("")));
+  rows.push(row("swap", "Swapped", `ecash exchanged for new ecash${feature("exactSwaps") ? "" : " (≈ operations)"}`, W.map((w) => cell(o.signatures[w.key].swap_amount, o.signatures[w.key].swap_ops, `swaps${approx()}`)).join("")));
   rows.push(row("neutral", "Blind signatures", "all outputs signed (mint + swap + melt change)", W.map((w) => cell(o.signatures[w.key].amount, o.signatures[w.key].count, "outputs")).join("")));
   rows.push(row("neutral", "Proofs spent", "inputs consumed by swaps and melts", W.map((w) => cell(o.spent[w.key].amount, o.spent[w.key].count, "proofs")).join("")));
   if (o.signatures.all.legacy_count > 0 || o.spent.all.legacy_count > 0) {
@@ -366,9 +436,9 @@ function renderSmallMultiples() {
   const labels = ts.buckets.map((b) => bucketLabel(b, ts.bin));
   const container = $("#small-multiples");
   const defs = [
-    { key: "mint", name: "Minted", color: p.mint, countLabel: "quotes" },
-    { key: "melt", name: "Melted", color: p.melt, countLabel: "quotes" },
-    { key: "swap", name: "Swapped", color: p.swap, countLabel: "swaps ≈" },
+    { key: "mint", name: "Minted", color: p.mint, countLabel: isCdk() ? "mints" : "quotes" },
+    { key: "melt", name: "Melted", color: p.melt, countLabel: isCdk() ? "melts" : "quotes" },
+    { key: "swap", name: "Swapped", color: p.swap, countLabel: `swaps${approx()}` },
   ];
   // Rebuild rows (destroying old charts) so canvases are fresh.
   for (const d of defs) {
@@ -529,6 +599,9 @@ function renderBalanceChart() {
   const box = $("#balance-chart-box");
   const old = state.charts.get("balance-chart");
   if (old) old.destroy();
+  // A mint that keeps no balance log (CDK) has nothing to chart: drop the card, the grid closes the gap.
+  box.closest(".card").hidden = !feature("balanceLog");
+  if (!feature("balanceLog")) return;
   if (!rows.length) {
     box.innerHTML = `<div class="empty">No balance_log entries for ${esc(unit)} in this range. Nutshell writes them when it reconciles its Lightning backend balance.</div>`;
     $("#balance-table").innerHTML = "";
@@ -588,7 +661,7 @@ function renderBalanceChart() {
 function renderHourly() {
   const rows = state.data.hourly;
   const p = palette();
-  $("#hourly-hint").textContent = `last 30 days, mint local time (${state.data.health.mintTz})`;
+  $("#hourly-hint").textContent = `last 30 days, ${feature("localTimestamps") ? "mint local time" : "time zone"} (${state.data.health.mintTz})`;
   const bar = (label, color, key) => ({
     label,
     data: rows.map((r) => r[key]),
@@ -602,7 +675,7 @@ function renderHourly() {
     type: "bar",
     data: {
       labels: rows.map((r) => String(r.hour).padStart(2, "0")),
-      datasets: [bar("Mints", p.mint, "mints"), bar("Melts", p.melt, "melts"), bar("Swaps ≈", p.swap, "swaps")],
+      datasets: [bar("Mints", p.mint, "mints"), bar("Melts", p.melt, "melts"), bar(`Swaps${approx()}`, p.swap, "swaps")],
     },
     options: {
       responsive: true,
@@ -622,7 +695,7 @@ function renderHourly() {
       })(),
     },
   });
-  $("#hourly-table").innerHTML = `<table><thead><tr><th>Hour</th><th class="num">Mints</th><th class="num">Melts</th><th class="num">Swaps ≈</th></tr></thead><tbody>${rows
+  $("#hourly-table").innerHTML = `<table><thead><tr><th>Hour</th><th class="num">Mints</th><th class="num">Melts</th><th class="num">Swaps${approx()}</th></tr></thead><tbody>${rows
     .map((r) => `<tr><td>${String(r.hour).padStart(2, "0")}:00</td><td class="num">${r.mints}</td><td class="num">${r.melts}</td><td class="num">${r.swaps}</td></tr>`)
     .join("")}</tbody></table>`;
 }
@@ -722,7 +795,7 @@ function renderChecks() {
 
 function renderKeysets() {
   const rows = state.data.keysets;
-  $("#keysets-table").innerHTML = `<thead><tr><th>Keyset</th><th>Unit</th><th>Fee ppk</th><th>First seen</th><th class="num">Issued</th><th class="num">Redeemed</th><th class="num">Pending</th><th class="num">Balance</th><th class="num">Fees paid</th><th>Ledger</th></tr></thead><tbody>${rows
+  $("#keysets-table").innerHTML = `<thead><tr><th>Keyset</th><th>Unit</th><th>Fee ppk</th><th>${isCdk() ? "Created" : "First seen"}</th><th class="num">Issued</th><th class="num">Redeemed</th><th class="num">Pending</th><th class="num">Balance</th><th class="num">Fees paid</th><th>Ledger</th></tr></thead><tbody>${rows
     .map((k) => {
       const unit = k.unit || state.unit;
       return `<tr>
@@ -757,13 +830,378 @@ function renderActivity() {
 }
 
 function renderFooter() {
-  const o = state.data.overview;
   const b = state.data.health.build;
   const deployed = b
     ? `nutboard ${esc(b.version)} · commit <span class="mono">${esc(b.commit)}${b.dirty ? "+dirty" : ""}</span>${b.builtAt ? ` · deployed ${esc(fmtDate(b.builtAt))}` : ""}<br>`
     : "";
-  $("#footer").innerHTML = `${deployed}Statistics generated ${esc(fmtDate(o.generatedAt))} from read-only queries. Swap counts are approximate: Nutshell does not record a swap id, so outputs stored within the same second are counted as one swap. Blind signatures mean the mint cannot see who holds which notes; everything here is derived from issued and redeemed amounts only.`;
+  const generatedAt =
+    state.view === "mint" ? state.data.overview?.generatedAt
+    : state.view === "lnbits" ? state.data.ln?.overview.generatedAt
+    : state.view === "all" ? state.data.summary?.generatedAt
+    : null;
+  const note =
+    state.view === "mint"
+      ? `${feature("exactSwaps") ? "" : "Swap counts are approximate: Nutshell does not record a swap id, so outputs stored within the same second are counted as one swap. "}Blind signatures mean the mint cannot see who holds which notes; everything here is derived from issued and redeemed amounts only.`
+      : state.view === "lnbits"
+        ? "From the LNbits database: balances, amounts and times only. API keys, invoices, preimages and memos are not readable by this dashboard."
+        : state.view === "control"
+          ? "The kill switch stops services through a root-owned helper on the server; this dashboard cannot start anything."
+          : "Each source is read from its own database with a SELECT-only role.";
+  $("#footer").innerHTML = `${deployed}${generatedAt ? `Statistics generated ${esc(fmtDate(generatedAt))} from read-only queries. ` : ""}${note}`;
 }
+
+// ---------- views: all sources, one mint, LNbits, kill switch ----------
+const VIEW_IDS = ["all", "mint", "lnbits", "control"];
+const tile = (label, value, sub = "", cls = "") =>
+  `<div class="tile ${cls}"><div class="label">${label}</div><div class="value">${value}</div>${sub ? `<div class="sub">${sub}</div>` : ""}</div>`;
+const shortId = (id) => (id && id.length > 10 ? `${id.slice(0, 8)}…` : id || "");
+const agoOr = (d, never = "never") => (d ? fmtAgo(d) : never);
+
+/** The navigation and everything else that depends on which view is open. */
+function renderChrome() {
+  const h = state.data.health;
+  const site = h.siteName || h.mintName || "nutboard";
+  $("#mint-name").textContent = site;
+  const current = state.view === "mint" ? h.mintName : state.view === "lnbits" ? h.lnbits?.name : state.view === "control" ? "Kill switch" : site;
+  document.title = `${current || site} · nutboard`;
+  const nav = $("#views");
+  nav.hidden = !(h.mints.length > 1 || h.lnbits || h.killSwitch);
+  const btn = (view, mint, label, cls = "") =>
+    `<button type="button" class="${cls}" data-view="${view}"${mint ? ` data-mint="${esc(mint)}"` : ""} aria-pressed="${state.view === view && (view !== "mint" || state.mint === mint)}">${label}</button>`;
+  nav.innerHTML = [
+    btn("all", null, "Overview"),
+    ...h.mints.map((m) => btn("mint", m.id, `${esc(m.name)}<span class="badge">${m.kind === "cdk" ? "CDK" : "Nutshell"}</span>`)),
+    h.lnbits ? btn("lnbits", null, esc(h.lnbits.name)) : "",
+    h.killSwitch ? btn("control", null, "Kill switch", "control danger") : "",
+  ].join("");
+  for (const id of VIEW_IDS) $(`#view-${id}`).hidden = state.view !== id;
+  $("#status-bar").hidden = state.view !== "mint";
+  $("#unit-select").parentElement.style.display = state.view === "mint" && state.units.length > 1 ? "" : "none";
+  $("#range-control").style.display = state.view === "mint" || state.view === "lnbits" ? "" : "none";
+}
+
+function openView(view, mint = null) {
+  state.view = view;
+  if (mint) state.mint = mint;
+  loadAll();
+}
+
+// ---------- overview of all sources ----------
+const UNIT_STATE_CLASS = { active: "ok", activating: "warn", reloading: "warn", deactivating: "warn", inactive: "fail", failed: "fail" };
+
+function renderSummary() {
+  const s = state.data.summary;
+  if (!s) return;
+  const L = s.liabilitiesSat;
+  $("#all-hero").innerHTML = `
+    <div class="label">Owed in total</div>
+    <div class="value">${esc(fmtAmount(L.total, "sat", { bare: true }))}<span class="unit">sat</span></div>
+    <div class="sub">${esc(fmtAmount(L.mints, "sat"))} ecash outstanding${s.lnbits ? ` + ${esc(fmtAmount(L.lnbits, "sat"))} in LNbits wallets` : ""}</div>
+    <div class="sub counter-line">What one Lightning node has to cover if it backs all of this. Units other than sat are not counted.</div>`;
+
+  const tiles = [];
+  for (const m of s.mints) {
+    const sat = m.units.find((u) => u.unit === "sat") || m.units[0];
+    tiles.push(
+      m.error
+        ? tile(esc(m.name), "–", `<span class="source-error">${esc(m.error)}</span>`, "bad")
+        : tile(esc(m.name), sat ? esc(fmtAmount(sat.outstanding, sat.unit, { compact: true })) : "–", sat ? `outstanding · last operation ${esc(agoOr(sat.lastActivity))}` : "no keysets yet"),
+    );
+  }
+  if (s.lnbits) {
+    tiles.push(
+      s.lnbits.error
+        ? tile(esc(s.lnbits.name), "–", `<span class="source-error">${esc(s.lnbits.error)}</span>`, "bad")
+        : tile(esc(s.lnbits.name), esc(fmtAmount(s.lnbits.balance, "sat", { compact: true })), `${esc(fmtInt(s.lnbits.fundedWallets))} funded wallets · last payment ${esc(agoOr(s.lnbits.lastPayment))}`),
+    );
+  }
+  const k = state.data.kill;
+  if (k?.enabled && k.units.length) {
+    const known = k.units.filter((u) => u.state !== "unknown");
+    const down = known.filter((u) => u.state !== "active");
+    tiles.push(
+      tile(
+        "Services",
+        known.length ? `${known.length - down.length} / ${known.length} running` : "–",
+        down.length ? esc(down.map((u) => `${u.unit}: ${u.state}`).join(" · ")) : known.length ? "everything the kill switch covers is up" : "systemd could not be asked",
+        down.length ? "bad" : "",
+      ),
+    );
+  }
+  $("#all-tiles").innerHTML = tiles.join("");
+
+  const W = s.windows.filter((w) => w.key !== "all");
+  const cell = (amount, count, unit, word) =>
+    `<td class="num"><span title="${esc(fmtAmount(amount, unit))}">${esc(fmtAmount(amount, unit, { compact: true }))}</span><span class="cell-sub">${esc(fmtInt(count))} ${word}</span></td>`;
+  const head = `<thead><tr><th>Source</th><th class="num">Owed</th>${W.map((w) => `<th class="num">In, ${esc(w.label)}</th><th class="num">Out, ${esc(w.label)}</th>`).join("")}<th>Last</th><th>Audit</th></tr></thead>`;
+  const rows = [];
+  for (const m of s.mints) {
+    const kind = `<span class="badge">${m.kind === "cdk" ? "CDK" : "Nutshell"}</span>`;
+    if (m.error) {
+      rows.push(`<tr class="clickable" data-view="mint" data-mint="${esc(m.id)}"><td>${esc(m.name)} ${kind}</td><td colspan="${3 + W.length * 2}" class="source-error">${esc(m.error)}</td></tr>`);
+      continue;
+    }
+    for (const u of m.units) {
+      const audit = u.audit.fail ? `<span class="pill fail"><span class="dot"></span>${u.audit.fail} failing</span>` : u.audit.warn ? `<span class="pill warn"><span class="dot"></span>${u.audit.warn} warnings</span>` : `<span class="pill ok"><span class="dot"></span>clean</span>`;
+      rows.push(`<tr class="clickable" data-view="mint" data-mint="${esc(m.id)}" data-unit="${esc(u.unit)}">
+        <td>${esc(m.name)} ${kind}<span class="cell-sub">${esc(u.unit)}${u.pending ? ` · ${esc(fmtAmount(u.pending, u.unit))} pending` : ""}</span></td>
+        <td class="num">${esc(fmtAmount(u.outstanding, u.unit))}</td>
+        ${W.map((w) => cell(u.windows[w.key].minted.amount, u.windows[w.key].minted.count, u.unit, "minted") + cell(u.windows[w.key].melted.amount, u.windows[w.key].melted.count, u.unit, "melted")).join("")}
+        <td>${esc(agoOr(u.lastActivity))}</td>
+        <td>${audit}</td>
+      </tr>`);
+    }
+  }
+  if (s.lnbits && !s.lnbits.error) {
+    const p = s.lnbits.payments;
+    rows.push(`<tr class="clickable" data-view="lnbits">
+      <td>${esc(s.lnbits.name)}<span class="cell-sub">sat · ${esc(fmtInt(s.lnbits.wallets))} wallets</span></td>
+      <td class="num">${esc(fmtAmount(s.lnbits.balance, "sat"))}</td>
+      ${W.map((w) => cell(p[w.key].received_amount, p[w.key].received_count, "sat", "received") + cell(p[w.key].sent_amount, p[w.key].sent_count, "sat", "sent")).join("")}
+      <td>${esc(agoOr(s.lnbits.lastPayment))}</td>
+      <td><span class="muted">n/a</span></td>
+    </tr>`);
+  } else if (s.lnbits) {
+    rows.push(`<tr class="clickable" data-view="lnbits"><td>${esc(s.lnbits.name)}</td><td colspan="${3 + W.length * 2}" class="source-error">${esc(s.lnbits.error)}</td></tr>`);
+  }
+  $("#all-table").innerHTML = `${head}<tbody>${rows.join("")}</tbody>`;
+}
+
+// ---------- LNbits ----------
+const walletLabel = (w) => state.labels.wallet[w.id] || w.name || shortId(w.id);
+const accountLabel = (w) => state.labels.account[w.account] || w.accountName || shortId(w.account);
+
+function renderLnbits() {
+  const ln = state.data.ln;
+  if (!ln) return;
+  const o = ln.overview;
+  const P = o.payments;
+  $("#ln-hero").innerHTML = `
+    <div class="label">LNbits owes its wallets</div>
+    <div class="value">${esc(fmtAmount(o.balance, "sat", { bare: true }))}<span class="unit">sat</span></div>
+    <div class="sub">${esc(fmtInt(o.wallets))} wallets in ${esc(fmtInt(o.accounts))} accounts, ${esc(fmtInt(o.fundedWallets))} of them funded${o.deletedWallets ? ` · ${esc(fmtInt(o.deletedWallets))} deleted` : ""}</div>
+    <div class="sub counter-line">Sum of LNbits' own balance view${o.schemaVersion ? ` · database version ${esc(o.schemaVersion)}` : ""}</div>`;
+  $("#ln-tiles").innerHTML = [
+    tile("Last payment", o.lastPayment ? `<span title="${esc(fmtDate(o.lastPayment))}">${esc(fmtAgo(o.lastPayment))}</span>` : "never", "settled, either direction"),
+    tile("Received (24 h)", esc(fmtAmount(P.h24.received_amount, "sat", { compact: true })), `${esc(fmtInt(P.h24.received_count))} payments`),
+    tile("Received (30 d)", esc(fmtAmount(P.d30.received_amount, "sat", { compact: true })), `${esc(fmtInt(P.d30.received_count))} payments`),
+    tile("Sent (30 d)", esc(fmtAmount(P.d30.sent_amount, "sat", { compact: true })), `${esc(fmtInt(P.d30.sent_count))} payments · ${esc(fmtAmount(P.d30.fees, "sat"))} fees`),
+    tile("Between wallets (30 d)", esc(fmtAmount(P.d30.internal_amount, "sat", { compact: true })), `${esc(fmtInt(P.d30.internal_count))} transfers, no Lightning`),
+    tile("In flight", esc(fmtAmount(o.pendingOut.amount, "sat", { compact: true })), `${esc(fmtInt(o.pendingOut.count))} outgoing payments pending`, o.pendingOut.count ? "bad" : ""),
+    tile("Open invoices", esc(fmtInt(o.openInvoices)), "created in the last day, not paid yet"),
+  ].join("");
+
+  const W = o.windows;
+  const row = (swatch, label, hint, cells) =>
+    `<tr><td><div class="row-label"><span class="swatch ${swatch}"></span><div>${label}<span class="cell-sub">${hint}</span></div></div></td>${cells}</tr>`;
+  const cell = (amount, count, word) =>
+    `<td class="num"><span title="${esc(fmtAmount(amount, "sat"))}">${esc(fmtAmount(amount, "sat", { compact: true }))}</span><span class="cell-sub">${esc(fmtInt(count))} ${word}</span></td>`;
+  $("#ln-window-table").innerHTML = `<thead><tr><th></th>${W.map((w) => `<th class="num">${esc(w.label)}</th>`).join("")}</tr></thead><tbody>${[
+    row("mint", "Received", "invoices paid into wallets", W.map((w) => cell(P[w.key].received_amount, P[w.key].received_count, "payments")).join("")),
+    row("melt", "Sent", "paid out over Lightning", W.map((w) => cell(P[w.key].sent_amount, P[w.key].sent_count, "payments")).join("")),
+    row("swap", "Between wallets", "inside this LNbits; counted in Received as well", W.map((w) => cell(P[w.key].internal_amount, P[w.key].internal_count, "transfers")).join("")),
+    row("neutral", "Lightning fees", "paid on outgoing payments", W.map((w) => `<td class="num">${esc(fmtAmount(P[w.key].fees, "sat"))}</td>`).join("")),
+    row("neutral", "Failed", "payments and invoices that did not go through", W.map((w) => `<td class="num">${esc(fmtInt(P[w.key].failed_count))}</td>`).join("")),
+  ].join("")}</tbody>`;
+
+  const p = palette();
+  const t = ln.series;
+  const bar = (label, color, points) => ({
+    label,
+    data: points.map((x) => x.amount),
+    backgroundColor: withAlpha(color, 0.85),
+    hoverBackgroundColor: color,
+    borderRadius: 3,
+    maxBarThickness: 22,
+  });
+  mountChart("ln-chart", {
+    type: "bar",
+    data: { labels: t.buckets.map((b) => bucketLabel(b, t.bin)), datasets: [bar("Received", p.mint, t.received), bar("Sent", p.melt, t.sent)] },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: false,
+      interaction: { mode: "index", intersect: false },
+      plugins: {
+        legend: { position: "bottom" },
+        tooltip: { callbacks: { label: (item) => ` ${item.dataset.label}: ${fmtAmount(item.raw, "sat")} · ${fmtInt((item.datasetIndex === 0 ? t.received : t.sent)[item.dataIndex].count)} payments` } },
+      },
+      scales: (() => {
+        const sc = baseScales(p);
+        sc.y.ticks.callback = (v) => fmtAxis(v, "sat");
+        return sc;
+      })(),
+    },
+  });
+
+  const shown = ln.wallets.filter((w) => state.lnShowAll || (!w.deleted && (w.balance > 0 || w.payments > 0)));
+  const renameBtn = (kind, id, current) =>
+    `<button type="button" class="rename" data-rename="${kind}" data-id="${esc(id)}" data-current="${esc(current || "")}" title="Name this ${kind} in nutboard" aria-label="Name this ${kind}">✎</button>`;
+  $("#ln-wallets").innerHTML = `<thead><tr><th>Wallet</th><th>Account</th><th class="num">Balance</th><th class="num">Received</th><th class="num">Sent</th><th class="num">Payments</th><th>Last activity</th></tr></thead><tbody>${
+    shown
+      .map((w) => {
+        const label = state.labels.wallet[w.id];
+        const accLabel = state.labels.account[w.account];
+        return `<tr class="clickable${state.lnWallet === w.id ? " selected" : ""}" data-wallet="${esc(w.id)}">
+          <td><strong>${esc(walletLabel(w))}</strong>${renameBtn("wallet", w.id, label)}${w.deleted ? ' <span class="badge">deleted</span>' : ""}
+            <span class="cell-sub">${label && w.name ? `${esc(w.name)} · ` : ""}<span class="mono">${esc(shortId(w.id))}</span>${w.currency ? ` · shown in ${esc(w.currency)}` : ""}</span></td>
+          <td>${esc(accountLabel(w))}${renameBtn("account", w.account, accLabel)}
+            <span class="cell-sub">${accLabel && w.accountName ? `${esc(w.accountName)} · ` : ""}<span class="mono">${esc(shortId(w.account))}</span></span></td>
+          <td class="num">${esc(fmtAmount(w.balance, "sat"))}</td>
+          <td class="num">${esc(fmtAmount(w.received, "sat"))}<span class="cell-sub">${esc(fmtAmount(w.received30d, "sat"))} in 30 d</span></td>
+          <td class="num">${esc(fmtAmount(w.sent, "sat"))}<span class="cell-sub">${esc(fmtAmount(w.sent30d, "sat"))} in 30 d</span></td>
+          <td class="num">${esc(fmtInt(w.payments))}</td>
+          <td>${w.lastActivity ? `${esc(fmtAgo(w.lastActivity))}<span class="cell-sub">${esc(fmtDate(w.lastActivity))}</span>` : '<span class="muted">never</span>'}</td>
+        </tr>`;
+      })
+      .join("") || `<tr><td colspan="7" class="empty">no wallets with a balance or payments</td></tr>`
+  }</tbody>`;
+  $("#ln-show-all").checked = state.lnShowAll;
+
+  const byId = new Map(ln.wallets.map((w) => [w.id, w]));
+  const picked = state.lnWallet ? byId.get(state.lnWallet) : null;
+  $("#ln-payments-hint").innerHTML = picked
+    ? `payments of <strong>${esc(walletLabel(picked))}</strong> · <button type="button" class="small" data-all-payments>show all wallets</button>`
+    : "newest first, all wallets; click a wallet above to see only its payments";
+  $("#ln-payments").innerHTML = `<thead><tr><th>When</th><th>Wallet</th><th class="num">Amount</th><th class="num">Fee</th><th>Status</th><th>Via</th></tr></thead><tbody>${
+    ln.payments
+      .map((x) => {
+        const w = byId.get(x.walletId);
+        const status = x.status === "success" ? '<span class="pill ok"><span class="dot"></span>settled</span>' : x.status === "pending" ? '<span class="pill warn"><span class="dot"></span>pending</span>' : `<span class="pill fail"><span class="dot"></span>${esc(x.status)}</span>`;
+        return `<tr><td>${esc(fmtAgo(x.at))}<span class="cell-sub">${esc(fmtDate(x.at))}</span></td>
+          <td>${esc(w ? walletLabel(w) : shortId(x.walletId))}</td>
+          <td class="num ${x.amount > 0 ? "amount-in" : "amount-out"}">${x.amount > 0 ? "+" : "−"}${esc(fmtAmount(Math.abs(x.amount), "sat"))}</td>
+          <td class="num muted">${x.fee ? esc(fmtAmount(x.fee, "sat")) : ""}</td>
+          <td>${status}</td>
+          <td class="muted">${x.internal ? "between wallets" : esc(x.tag || "")}</td></tr>`;
+      })
+      .join("") || `<tr><td colspan="6" class="empty">no payments</td></tr>`
+  }</tbody>`;
+}
+
+async function renameLabel(kind, id, current) {
+  const what = kind === "wallet" ? "wallet" : "account";
+  const name = prompt(`Name for this ${what} in nutboard (leave empty to remove). It is stored here only, never in LNbits.`, current || "");
+  if (name === null) return;
+  try {
+    state.labels = await post("/api/labels", { kind, id, name }, "PUT");
+    renderLnbits();
+  } catch (err) {
+    showError(`Could not save the name: ${err.message}`);
+  }
+}
+
+// ---------- kill switch ----------
+const KILL_GROUP_LABEL = { mints: "Mints", lnbits: "LNbits", "lnd-link": "Link to the Lightning node" };
+
+function renderControl() {
+  const k = state.data.kill;
+  if (!k?.enabled) return;
+  $("#kill-problems").innerHTML = k.problems.map((x) => `<div class="kill-problem">${esc(x)}</div>`).join("");
+  $("#kill-units").innerHTML = `<thead><tr><th>Group</th><th>Unit</th><th>State</th></tr></thead><tbody>${
+    k.units
+      .map((u) => `<tr><td>${esc(KILL_GROUP_LABEL[u.group] || u.group)}</td><td class="mono">${esc(u.unit)}</td>
+        <td><span class="pill ${UNIT_STATE_CLASS[u.state] || ""}"><span class="dot"></span>${esc(u.state)}</span></td></tr>`)
+      .join("") || `<tr><td colspan="3" class="empty">no units are listed for the kill switch</td></tr>`
+  }</tbody>`;
+  $("#kill-targets").innerHTML = k.targets
+    .map((t) => {
+      const units = k.units.filter((u) => t.groups.includes(u.group)).map((u) => u.unit);
+      const waiting = k.pending.includes(t.id);
+      return `<div class="kill-target${t.catastrophic ? " catastrophic" : ""}">
+        <div class="what"><strong>${esc(t.label)}</strong><p>${esc(t.description)}</p>
+          <span class="cell-sub mono">${esc(units.join("  ") || "no units listed")}</span></div>
+        <button type="button" data-kill="${esc(t.id)}" ${waiting ? "disabled" : ""}>${waiting ? "Requested…" : esc(t.label)}</button>
+      </div>`;
+    })
+    .join("");
+  $("#kill-log").innerHTML = `<thead><tr><th>When</th><th>What</th><th>Confirmed with</th></tr></thead><tbody>${
+    k.log
+      .map((l) => `<tr><td>${esc(fmtDate(l.at))}<span class="cell-sub">${esc(fmtAgo(l.at))}</span></td>
+        <td>${esc(k.targets.find((t) => t.id === l.target)?.label || l.target)}</td><td>${esc(l.passkey || "–")}</td></tr>`)
+      .join("") || `<tr><td colspan="3" class="empty">the kill switch has not been used</td></tr>`
+  }</tbody>`;
+}
+
+/** Uses the passkey again: the kill switch does not accept a session that is more than a few minutes old. */
+async function reauthenticate() {
+  const { flowId, options } = await post("/api/auth/login/options");
+  const response = await usePasskey(options);
+  await post("/api/auth/login/verify", { flowId, response });
+}
+
+async function pullKillSwitch(targetId) {
+  const k = state.data.kill;
+  const t = k?.targets.find((x) => x.id === targetId);
+  if (!t) return;
+  const msg = $("#kill-msg");
+  const say = (text, bad = false) => {
+    msg.textContent = text;
+    msg.classList.toggle("bad", bad);
+  };
+  const typed = prompt(`${t.label}\n\n${t.description}\n\nThis cannot be undone from the dashboard. Type ${t.confirm} to go ahead:`);
+  if (typed === null) return;
+  if (typed.trim() !== t.confirm) return say("Nothing was done: the phrase did not match.", true);
+  const send = () => post("/api/kill", { target: t.id, confirm: t.confirm });
+  say("Sending…");
+  try {
+    try {
+      state.data.kill = await send();
+    } catch (err) {
+      if (err.code !== "reauth_required") throw err;
+      say("Confirm with Face ID / Touch ID…");
+      await reauthenticate();
+      state.data.kill = await send();
+    }
+  } catch (err) {
+    return say(err.name === "NotAllowedError" || err.name === "AbortError" ? "Nothing was done: the passkey prompt was cancelled." : `Nothing was done: ${err.message}`, true);
+  }
+  say(`Requested: ${t.label}. The services stop within a few seconds; the table above shows when.`);
+  renderControl();
+  const again = async () => {
+    if (state.view !== "control") return;
+    try {
+      state.data.kill = await fetchJson("/api/kill");
+      renderControl();
+    } catch {
+      /* the next refresh will show it */
+    }
+  };
+  setTimeout(again, 2500);
+  setTimeout(again, 8000);
+}
+
+$("#views").addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-view]");
+  if (btn) openView(btn.dataset.view, btn.dataset.mint || null);
+});
+$("#all-table").addEventListener("click", (e) => {
+  const row = e.target.closest("tr[data-view]");
+  if (!row) return;
+  if (row.dataset.unit) state.unit = row.dataset.unit;
+  openView(row.dataset.view, row.dataset.mint || null);
+});
+$("#view-lnbits").addEventListener("click", (e) => {
+  const rename = e.target.closest("button[data-rename]");
+  if (rename) return renameLabel(rename.dataset.rename, rename.dataset.id, rename.dataset.current);
+  if (e.target.closest("button[data-all-payments]")) {
+    state.lnWallet = null;
+    return loadAll();
+  }
+  const row = e.target.closest("tr[data-wallet]");
+  if (row) {
+    state.lnWallet = state.lnWallet === row.dataset.wallet ? null : row.dataset.wallet;
+    loadAll();
+  }
+});
+$("#ln-show-all").addEventListener("change", (e) => {
+  state.lnShowAll = e.target.checked;
+  renderLnbits();
+});
+$("#kill-targets").addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-kill]");
+  if (btn) pullKillSwitch(btn.dataset.kill);
+});
 
 // ---------- events ----------
 $("#unit-select").addEventListener("change", (e) => {

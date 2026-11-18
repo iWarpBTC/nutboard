@@ -1,0 +1,11 @@
+# /etc/systemd/system/nutboard-kill.path
+# Starts nutboard-kill.service as soon as nutboard drops a request into /run/nutboard-kill.
+[Unit]
+Description=nutboard kill switch: wait for a request
+
+[Path]
+PathExistsGlob=/run/nutboard-kill/*.request
+Unit=nutboard-kill.service
+
+[Install]
+WantedBy=multi-user.target

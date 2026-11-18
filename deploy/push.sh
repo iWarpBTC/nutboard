@@ -19,4 +19,6 @@ ssh -t "$TARGET" '
     $S systemctl restart nutboard && systemctl --no-pager --lines=5 status nutboard
   else
     echo "Code is in /opt/nutboard. Install the service next (deploy/README.md, step 5)."
-  fi'
+  fi
+  # further mints on the same server run as nutboard@<name> from the same code
+  $S systemctl restart "nutboard@*" 2>/dev/null || true'

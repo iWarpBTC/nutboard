@@ -1,0 +1,8 @@
+# /etc/systemd/system/nutboard-kill.service
+# Runs as root: stops and disables the units listed in /etc/nutboard/killswitch.conf.
+[Unit]
+Description=nutboard kill switch: stop the listed services
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/nutboard-kill

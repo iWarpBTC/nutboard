@@ -1,7 +1,7 @@
 {
   "name": "nutboard",
   "short_name": "nutboard",
-  "description": "Read-only statistics for a Nutshell mint",
+  "description": "Read-only statistics for a Cashu mint",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

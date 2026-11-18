@@ -21,6 +21,8 @@ Environment=NODE_ENV=production
 StateDirectory=nutboard
 StateDirectoryMode=0700
 UMask=0077
+# The kill switch (optional, see deploy/README.md): the only place outside its state directory nutboard may write.
+ReadWritePaths=-/run/nutboard-kill
 Restart=on-failure
 RestartSec=5
 

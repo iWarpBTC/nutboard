@@ -129,6 +129,31 @@ test("the whole sign-in lifecycle against a software passkey", async () => {
   assert.throws(() => auth.requireSession(fakeReq(cookie)), { code: "signed_out" });
 });
 
+test("the kill switch needs the passkey to have been used just now", async () => {
+  const db = openAuthDb(":memory:");
+  const auth = createAuth(db, { origin: ORIGIN, setupCode: SETUP_CODE, log: quiet });
+  const authenticator = new VirtualAuthenticator();
+  const opts = await auth.registrationOptions(fakeReq(), { setupCode: SETUP_CODE });
+  const r1 = fakeRes();
+  await auth.registrationVerify(fakeReq(), r1, { flowId: opts.flowId, response: authenticator.create(opts.options, ORIGIN), name: "Test passkey" });
+  const cookie = sessionFrom(r1.headers["set-cookie"]);
+  const FIVE_MIN = 5 * 60_000;
+
+  assert.throws(() => auth.requireFreshSession(fakeReq(), FIVE_MIN), { code: "signed_out", status: 401 }, "no session at all");
+  assert.equal(auth.requireFreshSession(fakeReq(cookie), FIVE_MIN).credential_id.length > 0, true, "just signed in: fresh");
+
+  // ten minutes later the cookie still opens the dashboard, but no longer the kill switch
+  db.exec("UPDATE auth_sessions SET created_at = created_at - 600000");
+  assert.ok(auth.requireSession(fakeReq(cookie)));
+  assert.throws(() => auth.requireFreshSession(fakeReq(cookie), FIVE_MIN), { code: "reauth_required", status: 401 });
+
+  // using the passkey again makes a fresh session
+  const o = await auth.authenticationOptions();
+  const r2 = fakeRes();
+  await auth.authenticationVerify(fakeReq(cookie), r2, { flowId: o.flowId, response: authenticator.get(o.options, ORIGIN) });
+  assert.ok(auth.requireFreshSession(fakeReq(sessionFrom(r2.headers["set-cookie"])), FIVE_MIN));
+});
+
 // ---------------------------------------------------------------------------- HTTP layer (needs a mint database)
 
 const TEST_DB = process.env.TEST_DATABASE_URL;
