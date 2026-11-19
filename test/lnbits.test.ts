@@ -29,7 +29,10 @@ after(async () => {
 
 test("lnbits: balances, wallets and windows describe the same ledger", { skip }, async () => {
   const [o, wallets] = await Promise.all([stats.overview(), stats.wallets()]);
-  const live = wallets.filter((w) => !w.deleted);
+  const live = wallets.filter((w) => !w.deleted && !w.accountDeleted);
+  // a wallet whose owner LNbits marked "del:" is not live, whatever its deleted flag says
+  for (const w of wallets) assert.equal(w.accountDeleted, w.account.startsWith("del:"), `wallet ${w.id}`);
+  assert.ok(wallets.some((w) => w.accountDeleted && !w.deleted), "the fixture has a wallet of a deleted account");
   assert.equal(live.length, o.wallets);
   assert.equal(wallets.length - live.length, o.deletedWallets);
   assert.equal(new Set(live.map((w) => w.account)).size, o.accounts);

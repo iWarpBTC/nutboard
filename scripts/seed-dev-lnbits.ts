@@ -70,6 +70,14 @@ accounts.forEach((account, i) => {
   }
 });
 const live = wallets.filter((w) => !w.deleted);
+// A wallet deleted the way LNbits did it before the deleted flag: owner and keys prefixed with "del:",
+// deleted still false. It was used and emptied before that, so it has payments and no balance.
+const legacy: Wallet = { id: hex(16), balance: 0, deleted: false };
+const legacyCreated = new Date(start.getTime() - 200 * dayMs);
+walletRows.push([
+  legacy.id, "Cache", `del:${hex(16)}`, `del:dev-admin-${hex(8)}`, `del:dev-invoice-${hex(8)}`,
+  null, false, ts(legacyCreated), ts(legacyCreated), null, "lightning", null,
+]);
 
 // ---------- payments ----------
 const payments: Row[] = [];
@@ -80,6 +88,8 @@ function add(wallet: Wallet, checkingId: string, amountMsat: number, feeMsat: nu
     status === "success" ? hex(32) : null, `lnbc${Math.abs(amountMsat) / 1000}n1${hex(20)}`, status, tag, null, ts(at), ts(at),
   ]);
 }
+add(legacy, hex(32), 50_000_000, 0, "success", new Date(start.getTime() + dayMs), null);
+add(legacy, hex(32), -50_000_000, 0, "success", new Date(start.getTime() + 2 * dayMs), null);
 for (let day = 0; day < DAYS; day++) {
   const events = randInt(2, 9);
   for (let i = 0; i < events; i++) {

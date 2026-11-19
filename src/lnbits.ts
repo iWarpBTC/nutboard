@@ -26,8 +26,9 @@ const TABLES = ["wallets", "apipayments", "balances", "accounts", "dbversions"] 
 export interface LnbitsOverview {
   generatedAt: string;
   windows: typeof WINDOWS;
-  /** wallets that are not deleted */
+  /** wallets that are not deleted and whose account is not deleted either */
   wallets: number;
+  /** wallets deleted one way or the other: the flag, or an owner marked "del:" */
   deletedWallets: number;
   /** wallets holding more than nothing */
   fundedWallets: number;
@@ -55,6 +56,8 @@ export interface LnbitsWallet {
   accountName: string | null;
   currency: string | null;
   deleted: boolean;
+  /** the owner is marked "del:<id>": how LNbits before the deleted flag took a wallet away from its account */
+  accountDeleted: boolean;
   createdAt: Date | null;
   balance: number;
   received: number;
@@ -117,7 +120,12 @@ export async function createLnbitsStats(db: Db): Promise<LnbitsStats> {
     : "NULL::text";
   const hasAccounts = (columns.get("accounts")?.has("id") && columns.get("accounts")?.has("username")) ?? false;
   const walletCols = columns.get("wallets") as Set<string>;
-  const LIVE = "NOT coalesce(w.deleted, false)";
+  /**
+   * LNbits before the deleted flag removed a wallet by prefixing its owner (and its keys) with "del:".
+   * Such rows can still say deleted = false, so the flag alone does not catch them.
+   */
+  const ACCOUNT_DELETED = `(w."user" LIKE 'del:%')`;
+  const LIVE = `NOT (coalesce(w.deleted, false) OR ${ACCOUNT_DELETED})`;
   /** Naive timestamp in LNbits time for "now minus interval"; $1 must be the time zone. */
   const since = (interval: string): string => `((now() - interval '${interval}') AT TIME ZONE $1)`;
 
@@ -197,7 +205,7 @@ export async function createLnbitsStats(db: Db): Promise<LnbitsStats> {
   async function wallets(): Promise<LnbitsWallet[]> {
     const rows = await db.query<{
       id: string; name: string | null; account: string; account_name: string | null; currency: string | null;
-      deleted: boolean; created_at: Date | null; balance: number; received: number; sent: number; payments: number;
+      deleted: boolean; account_deleted: boolean; created_at: Date | null; balance: number; received: number; sent: number; payments: number;
       received_30d: number; sent_30d: number; last_activity: Date | null;
     }>(
       `WITH pay AS (
@@ -214,6 +222,7 @@ export async function createLnbitsStats(db: Db): Promise<LnbitsStats> {
               ${hasAccounts ? "nullif(a.username, '')" : "NULL::text"} AS account_name,
               ${walletCols.has("currency") ? "nullif(w.currency, '')" : "NULL::text"} AS currency,
               coalesce(w.deleted, false) AS deleted,
+              ${ACCOUNT_DELETED} AS account_deleted,
               ${walletCols.has("created_at") ? "(w.created_at AT TIME ZONE $1)" : "NULL::timestamptz"} AS created_at,
               floor(coalesce(b.balance, 0) / 1000.0)::bigint AS balance,
               coalesce(pay.received, 0) AS received, coalesce(pay.sent, 0) AS sent, coalesce(pay.payments, 0) AS payments,
@@ -233,6 +242,7 @@ export async function createLnbitsStats(db: Db): Promise<LnbitsStats> {
       accountName: r.account_name,
       currency: r.currency,
       deleted: r.deleted,
+      accountDeleted: r.account_deleted,
       createdAt: r.created_at,
       balance: r.balance,
       received: r.received,

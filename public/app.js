@@ -1034,7 +1034,7 @@ function renderLnbits() {
     },
   });
 
-  const shown = ln.wallets.filter((w) => state.lnShowAll || (!w.deleted && (w.balance > 0 || w.payments > 0)));
+  const shown = ln.wallets.filter((w) => state.lnShowAll || (!w.deleted && !w.accountDeleted && (w.balance > 0 || w.payments > 0)));
   const renameBtn = (kind, id, current) =>
     `<button type="button" class="rename" data-rename="${kind}" data-id="${esc(id)}" data-current="${esc(current || "")}" title="Name this ${kind} in nutboard" aria-label="Name this ${kind}">✎</button>`;
   $("#ln-wallets").innerHTML = `<thead><tr><th>Wallet</th><th>Account</th><th class="num">Balance</th><th class="num">Received</th><th class="num">Sent</th><th class="num">Payments</th><th>Last activity</th></tr></thead><tbody>${
@@ -1043,7 +1043,7 @@ function renderLnbits() {
         const label = state.labels.wallet[w.id];
         const accLabel = state.labels.account[w.account];
         return `<tr class="clickable${state.lnWallet === w.id ? " selected" : ""}" data-wallet="${esc(w.id)}">
-          <td><strong>${esc(walletLabel(w))}</strong>${renameBtn("wallet", w.id, label)}${w.deleted ? ' <span class="badge">deleted</span>' : ""}
+          <td><strong>${esc(walletLabel(w))}</strong>${renameBtn("wallet", w.id, label)}${w.deleted ? ' <span class="badge">deleted</span>' : w.accountDeleted ? ' <span class="badge">deleted account</span>' : ""}
             <span class="cell-sub">${label && w.name ? `${esc(w.name)} · ` : ""}<span class="mono">${esc(shortId(w.id))}</span>${w.currency ? ` · shown in ${esc(w.currency)}` : ""}</span></td>
           <td>${esc(accountLabel(w))}${renameBtn("account", w.account, accLabel)}
             <span class="cell-sub">${accLabel && w.accountName ? `${esc(w.accountName)} · ` : ""}<span class="mono">${esc(shortId(w.account))}</span></span></td>
