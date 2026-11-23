@@ -1123,40 +1123,106 @@ function renderControl() {
   }</tbody>`;
 }
 
-/** Uses the passkey again: the kill switch does not accept a session that is more than a few minutes old. */
-async function reauthenticate() {
-  const { flowId, options } = await post("/api/auth/login/options");
-  const response = await usePasskey(options);
-  await post("/api/auth/login/verify", { flowId, response });
+// A pull is confirmed in a dialog: the phrase is typed there, and the tap on "Confirm" opens the passkey
+// sheet. iOS shows that sheet only while a tap is being handled, so the sign-in challenge is fetched when the
+// dialog opens and navigator.credentials.get is the first thing the tap does, before anything is awaited.
+const killUi = { target: null, flow: null, busy: false };
+const KILL_FLOW_MAX_AGE_MS = 4 * 60_000; // the server keeps a challenge for five minutes
+const killNeedsPasskey = () => !state.data.health?.authDisabled;
+
+function killSay(text, bad = false) {
+  const msg = $("#kill-dialog-msg");
+  msg.textContent = text;
+  msg.classList.toggle("bad", bad);
+}
+const killPhraseOk = () => !!killUi.target && $("#kill-input").value.trim().toUpperCase() === killUi.target.confirm;
+function syncKillDialog() {
+  const ready = !killNeedsPasskey() || !!killUi.flow;
+  $("#kill-confirm").disabled = killUi.busy || !killPhraseOk() || !ready;
+  $("#kill-confirm").textContent = killNeedsPasskey() ? "Confirm with passkey" : "Confirm";
+  $("#kill-input").disabled = killUi.busy;
 }
 
-async function pullKillSwitch(targetId) {
+/** Fetches a fresh sign-in challenge ahead of the tap. Each challenge works once. */
+async function prepareKillFlow() {
+  killUi.flow = null;
+  syncKillDialog();
+  if (!killNeedsPasskey()) return;
+  const target = killUi.target;
+  try {
+    const flow = await post("/api/auth/login/options");
+    if (killUi.target === target) killUi.flow = { ...flow, at: Date.now() };
+  } catch (err) {
+    killSay(`Could not prepare the passkey check: ${err.message}`, true);
+  }
+  syncKillDialog();
+}
+
+function openKillDialog(targetId) {
   const k = state.data.kill;
   const t = k?.targets.find((x) => x.id === targetId);
   if (!t) return;
-  const msg = $("#kill-msg");
-  const say = (text, bad = false) => {
-    msg.textContent = text;
-    msg.classList.toggle("bad", bad);
-  };
-  const typed = prompt(`${t.label}\n\n${t.description}\n\nThis cannot be undone from the dashboard. Type ${t.confirm} to go ahead:`);
-  if (typed === null) return;
-  if (typed.trim() !== t.confirm) return say("Nothing was done: the phrase did not match.", true);
-  const send = () => post("/api/kill", { target: t.id, confirm: t.confirm });
-  say("Sending…");
-  try {
-    try {
-      state.data.kill = await send();
-    } catch (err) {
-      if (err.code !== "reauth_required") throw err;
-      say("Confirm with Face ID / Touch ID…");
-      await reauthenticate();
-      state.data.kill = await send();
+  killUi.target = t;
+  killUi.busy = false;
+  $("#kill-dialog-title").textContent = t.label;
+  $("#kill-dialog-text").textContent = `${t.description} This cannot be undone from the dashboard.`;
+  $("#kill-dialog-units").textContent = k.units.filter((u) => t.groups.includes(u.group)).map((u) => u.unit).join("  ");
+  $("#kill-dialog-phrase").textContent = t.confirm;
+  $("#kill-input").value = "";
+  killSay("");
+  $("#kill-dialog").showModal();
+  $("#kill-input").focus();
+  prepareKillFlow();
+}
+
+function closeKillDialog() {
+  killUi.target = null;
+  killUi.flow = null;
+  if ($("#kill-dialog").open) $("#kill-dialog").close();
+}
+
+/** Runs inside the tap on "Confirm". Nothing may be awaited before the passkey call. */
+function confirmKill() {
+  const t = killUi.target;
+  if (!t || killUi.busy || !killPhraseOk()) return;
+  let signedIn = Promise.resolve();
+  if (killNeedsPasskey()) {
+    const flow = killUi.flow;
+    if (!flow || Date.now() - flow.at > KILL_FLOW_MAX_AGE_MS) {
+      killSay("The passkey check had expired and is being renewed. Tap Confirm again.", true);
+      prepareKillFlow();
+      return;
     }
-  } catch (err) {
-    return say(err.name === "NotAllowedError" || err.name === "AbortError" ? "Nothing was done: the passkey prompt was cancelled." : `Nothing was done: ${err.message}`, true);
+    killUi.flow = null;
+    signedIn = usePasskey(flow.options).then((response) => post("/api/auth/login/verify", { flowId: flow.flowId, response }));
   }
-  say(`Requested: ${t.label}. The services stop within a few seconds; the table above shows when.`);
+  killUi.busy = true;
+  syncKillDialog();
+  killSay(killNeedsPasskey() ? "Confirm with Face ID / Touch ID…" : "Sending…");
+  finishKill(t, signedIn);
+}
+
+async function finishKill(t, signedIn) {
+  try {
+    await signedIn;
+    state.data.kill = await post("/api/kill", { target: t.id, confirm: t.confirm });
+  } catch (err) {
+    killUi.busy = false;
+    const refused = err?.name === "NotAllowedError" || err?.name === "AbortError";
+    killSay(
+      refused
+        ? "Nothing was done: the passkey was not confirmed (cancelled, timed out, or the browser did not show the prompt)."
+        : `Nothing was done: ${AUTH_ERRORS[err?.code] || err?.message || "unknown error"}`,
+      true,
+    );
+    if (killUi.target === t) prepareKillFlow(); // a challenge is used up by any attempt
+    return;
+  }
+  killUi.busy = false;
+  closeKillDialog();
+  const msg = $("#kill-msg");
+  msg.textContent = `Requested: ${t.label}. The services stop within a few seconds; the table above shows when.`;
+  msg.classList.remove("bad");
   renderControl();
   const again = async () => {
     if (state.view !== "control") return;
@@ -1200,8 +1266,17 @@ $("#ln-show-all").addEventListener("change", (e) => {
 });
 $("#kill-targets").addEventListener("click", (e) => {
   const btn = e.target.closest("button[data-kill]");
-  if (btn) pullKillSwitch(btn.dataset.kill);
+  if (btn) openKillDialog(btn.dataset.kill);
 });
+$("#kill-input").addEventListener("input", syncKillDialog);
+$("#kill-confirm").addEventListener("click", confirmKill);
+$("#kill-cancel").addEventListener("click", closeKillDialog);
+$("#kill-dialog").addEventListener("close", () => {
+  killUi.target = null;
+  killUi.flow = null;
+});
+// Enter in the field must not submit the form: confirming has to be a tap on the button.
+$("#kill-form").addEventListener("submit", (e) => e.preventDefault());
 
 // ---------- events ----------
 $("#unit-select").addEventListener("change", (e) => {

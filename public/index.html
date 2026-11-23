@@ -245,6 +245,23 @@ Start the tunnel to the Lightning node first, then the mints and LNbits, and loo
   </main>
   <footer id="footer"></footer>
 
+  <!-- Confirmation for the kill switch. The passkey sheet has to open from the tap on "Confirm" itself,
+       so the phrase is typed here and not in a browser prompt. -->
+  <dialog id="kill-dialog" class="kill-dialog" aria-labelledby="kill-dialog-title">
+    <form id="kill-form" novalidate>
+      <h2 id="kill-dialog-title"></h2>
+      <p class="secondary" id="kill-dialog-text"></p>
+      <p class="cell-sub mono" id="kill-dialog-units"></p>
+      <label>Type <strong id="kill-dialog-phrase"></strong> to go ahead
+        <input id="kill-input" name="phrase" autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false" enterkeyhint="done"></label>
+      <p class="auth-msg" id="kill-dialog-msg" role="alert"></p>
+      <div class="dialog-actions">
+        <button type="button" id="kill-cancel">Cancel</button>
+        <button type="button" id="kill-confirm" class="confirm" disabled>Confirm</button>
+      </div>
+    </form>
+  </dialog>
+
   <script src="/vendor/chart.umd.js"></script>
   <script type="module" src="/app.js"></script>
 </body>
